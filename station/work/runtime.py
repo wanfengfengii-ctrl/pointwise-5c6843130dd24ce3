@@ -14,6 +14,7 @@ from station.dispatch.cancellations import cancel_ticket
 from station.dispatch.lanes import ensure_dispatch_schema, read_dispatch_status
 from station.dispatch.orders import dispatch_ticket
 from station.dispatch.reconcile import settle_lane
+from station.dispatch.swaps import ensure_swap_schema, swap_probes as execute_swap_probes
 from station.probe.device import ProbeDevice, ensure_device_schema
 from station.probe.recording import load_recording, replay_recording
 from station.probe.settlement import ensure_settlement_schema
@@ -33,6 +34,7 @@ class Station:
     def __init__(self, path):
         self.path = path
         self._issue_failure = False
+        self._swap_failure = False
         self._connect()
 
     def _connect(self):
@@ -41,8 +43,8 @@ class Station:
             with store.write() as db:
                 for ensure in (ensure_shift_schema, ensure_ruleset_schema, ensure_ticket_schema,
                                ensure_request_schema, ensure_trace_schema, ensure_settlement_schema,
-                               ensure_device_schema, ensure_dispatch_schema, ensure_sample_schema,
-                               ensure_claim_schema, ensure_result_schema):
+                               ensure_device_schema, ensure_dispatch_schema, ensure_swap_schema,
+                               ensure_sample_schema, ensure_claim_schema, ensure_result_schema):
                     ensure(db)
         except BaseException:
             store.close()
@@ -62,6 +64,7 @@ class Station:
     def reopen(self):
         self.close()
         self._issue_failure = False
+        self._swap_failure = False
         self._connect()
 
     def play_recording(self, recording):
@@ -81,6 +84,18 @@ class Station:
         with self._store.read() as db:
             read_ticket(db, ticket_id)
             return read_dispatch_status(db, ticket_id)
+
+    def swap_probes(self, request_id, left_ticket_id, right_ticket_id):
+        return execute_swap_probes(self._store, self.device, request_id,
+                                   left_ticket_id, right_ticket_id, self._before_swap_commit)
+
+    def fail_next_swap(self):
+        self._swap_failure = True
+
+    def _before_swap_commit(self):
+        if self._swap_failure:
+            self._swap_failure = False
+            raise StationError('swap_failed', 'the swap transaction was interrupted before commit')
 
     def cancel_ticket(self, ticket_id):
         return cancel_ticket(self._store, ticket_id)

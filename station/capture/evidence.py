@@ -49,5 +49,7 @@ def read_cancellation_evidence(db, ticket_id):
     evidence = _evidence(db, ticket)
     if evidence.sample is None:
         return evidence
-    factor = read_shift_ruleset(db, ticket.shift_id).factor(ticket.lane)
+    # Cancellation evidence is converted with the probe that actually took
+    # the sample, which can differ from the registered lane after a swap.
+    factor = read_shift_ruleset(db, ticket.shift_id).factor(evidence.sample.lane)
     return replace(evidence, micrometers=calibrate_micrometers(evidence.sample.raw_value, factor))

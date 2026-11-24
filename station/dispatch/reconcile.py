@@ -1,6 +1,6 @@
 from station.capture.claims import claim_lane_samples
-from station.dispatch.lanes import (DispatchOutcome, read_lane_links, read_sample_outcome,
-                                    read_ticket_outcome, record_lane_outcomes)
+from station.dispatch.lanes import (DispatchOutcome, read_acceptance_outcome, read_lane_links,
+                                    read_sample_outcome, record_lane_outcomes)
 from station.probe.settlement import LaneSettlement, SettlementItem
 from station.work.store import StationError, require_index, require_lane
 
@@ -35,7 +35,9 @@ def _verified_outcomes(db, cut, items):
     for link in links:
         sequence = items[link.acceptance_id].sequence
         status = 'unsampled' if sequence is None else 'sampled'
-        previous = read_ticket_outcome(db, link.ticket_id)
+        # Check this exact link generation. A retired swap execution must not
+        # be confused with the ticket's current qualification.
+        previous = read_acceptance_outcome(db, link.acceptance_id)
         if previous.status != 'awaiting_settlement' and (previous.status, previous.sequence) != (status, sequence):
             raise StationError('settlement_conflict', f'outcome changed for acceptance {link.acceptance_id}')
         if sequence is not None:

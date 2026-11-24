@@ -25,7 +25,9 @@ def issue_ticket(store, ticket_id, request_id, before_commit=None):
             raise StationError('evidence_pending', f'ticket {ticket_id} is {evidence.status}')
         sample = evidence.sample
         ruleset = read_shift_ruleset(db, ticket.shift_id)
-        micrometers = calibrate_micrometers(sample.raw_value, ruleset.factor(ticket.lane))
+        # A pre-swap pair exchange moves the execution to the opposite probe;
+        # convert with the frozen factor of the probe that actually sampled.
+        micrometers = calibrate_micrometers(sample.raw_value, ruleset.factor(sample.lane))
         result_id = f'result:{ticket_id}'
         receipt = FirstReceipt(f'receipt:{ticket_id}', result_id, request_id)
         result = IssuedResult(result_id, ticket_id, ticket.shift_id, sample.lane, sample.code,

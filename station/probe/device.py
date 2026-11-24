@@ -45,6 +45,9 @@ class ProbeDevice:
         with self._store.write() as db:
             db.execute('UPDATE probe_power SET online = ? WHERE device = 1', (enabled,))
 
+    def assert_online(self, db):
+        _require_online(db)
+
     def set_lane_ready(self, lane, ready):
         require_lane(lane)
         _check_switch(ready)
@@ -59,6 +62,16 @@ class ProbeDevice:
             ready = db.execute('SELECT ready FROM probe_lanes WHERE lane = ?', (lane,)).fetchone()[0]
             if not _online(db) or not ready:
                 return None
+            return append_acceptance(db, lane, code)
+
+    def accept_swap_credential(self, lane, code, connection):
+        # A swap only moves qualifications the device already accepted, so a
+        # lane paused for *new* tickets must not block it. The station itself
+        # still requires the device to be online for a new swap request.
+        require_lane(lane)
+        require_text(code, 'code')
+        with nullcontext(connection) as db:
+            _require_online(db)
             return append_acceptance(db, lane, code)
 
     def sample(self, acceptance_id, raw_value, source, sequence=None):

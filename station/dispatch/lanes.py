@@ -42,15 +42,23 @@ def ensure_dispatch_schema(db):
             lane TEXT NOT NULL
         )
     ''')
+    # A ticket normally has one current link. A probe swap retires the old
+    # acceptance link and inserts a new generation on the opposite lane; the
+    # retired row is retained so pre-swap settlement cuts keep their meaning.
     db.execute('''
         CREATE TABLE IF NOT EXISTS dispatch_links (
-            ticket_id TEXT PRIMARY KEY REFERENCES tickets(ticket_id),
-            acceptance_id INTEGER NOT NULL UNIQUE,
+            ticket_id TEXT NOT NULL REFERENCES tickets(ticket_id),
+            acceptance_id INTEGER PRIMARY KEY,
             lane TEXT NOT NULL,
             ordinal INTEGER NOT NULL,
             code TEXT NOT NULL,
+            state TEXT NOT NULL DEFAULT 'current' CHECK (state IN ('current', 'retired')),
             UNIQUE (lane, ordinal)
         )
+    ''')
+    db.execute('''
+        CREATE UNIQUE INDEX IF NOT EXISTS dispatch_links_one_current
+        ON dispatch_links(ticket_id) WHERE state = 'current'
     ''')
     db.execute('''
         CREATE TABLE IF NOT EXISTS dispatch_outcomes (
@@ -77,16 +85,33 @@ def record_acceptance_link(db, ticket, acceptance):
     link = DispatchLink(ticket.ticket_id, acceptance.acceptance_id, acceptance.lane,
                         acceptance.ordinal, acceptance.code)
     try:
-        db.execute('INSERT INTO dispatch_links VALUES (?, ?, ?, ?, ?)',
-                   (link.ticket_id, link.acceptance_id, link.lane, link.ordinal, link.code))
+        db.execute('''
+            INSERT INTO dispatch_links(ticket_id, acceptance_id, lane, ordinal, code, state)
+            VALUES (?, ?, ?, ?, ?, 'current')
+        ''', (link.ticket_id, link.acceptance_id, link.lane, link.ordinal, link.code))
     except IntegrityError as exc:
         raise StationError('acceptance_conflict', 'acceptance or ticket is already bound') from exc
     clear_lane_wait(db, ticket.ticket_id)
     return DispatchStatus(ticket.ticket_id, ticket.lane, 'accepted', link)
 
 
+def replace_link_for_swap(db, ticket_id, acceptance):
+    """Retire the ticket's current link and bind a swap credential."""
+    db.execute("UPDATE dispatch_links SET state = 'retired' WHERE ticket_id = ? AND state = 'current'",
+               (ticket_id,))
+    link = DispatchLink(ticket_id, acceptance.acceptance_id, acceptance.lane,
+                        acceptance.ordinal, acceptance.code)
+    db.execute('''
+        INSERT INTO dispatch_links(ticket_id, acceptance_id, lane, ordinal, code, state)
+        VALUES (?, ?, ?, ?, ?, 'current')
+    ''', (link.ticket_id, link.acceptance_id, link.lane, link.ordinal, link.code))
+    return link
+
+
 def read_dispatch_status(db, ticket_id):
-    row = db.execute('SELECT * FROM dispatch_links WHERE ticket_id = ?', (ticket_id,)).fetchone()
+    row = db.execute(
+        f"SELECT {_LINK_FIELDS} FROM dispatch_links l WHERE l.ticket_id = ? AND l.state = 'current'",
+        (ticket_id,)).fetchone()
     if row is not None:
         link = DispatchLink(**dict(row))
         return DispatchStatus(ticket_id, link.lane, 'accepted', link)
@@ -97,8 +122,11 @@ def read_dispatch_status(db, ticket_id):
 
 
 def read_lane_links(db, lane, through):
-    rows = db.execute('''
-        SELECT * FROM dispatch_links WHERE lane = ? AND ordinal <= ? ORDER BY ordinal
+    # Every generation is returned: a settlement prefix is defined by the
+    # device acceptance order, which still includes swapped-out executions.
+    rows = db.execute(f'''
+        SELECT {_LINK_FIELDS}
+        FROM dispatch_links l WHERE l.lane = ? AND l.ordinal <= ? ORDER BY l.ordinal
     ''', (lane, through))
     return tuple(DispatchLink(**dict(row)) for row in rows)
 
@@ -114,7 +142,13 @@ def _outcome(row):
 
 
 def read_ticket_outcome(db, ticket_id):
-    row = db.execute(_OUTCOMES + ' WHERE l.ticket_id = ?', (ticket_id,)).fetchone()
+    row = db.execute(_OUTCOMES + " WHERE l.ticket_id = ? AND l.state = 'current'",
+                     (ticket_id,)).fetchone()
+    return _outcome(row)
+
+
+def read_acceptance_outcome(db, acceptance_id):
+    row = db.execute(_OUTCOMES + ' WHERE l.acceptance_id = ?', (acceptance_id,)).fetchone()
     return _outcome(row)
 
 
