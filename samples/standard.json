@@ -1,0 +1,23 @@
+{
+  "shift": {
+    "id": "regular",
+    "ruleset": {"version": "film-v1", "factors": {"left": [1, 2], "right": [1, 3]}},
+    "tickets": [
+      {"ticket_id": "L", "lane": "left", "code": "X"},
+      {"ticket_id": "R", "lane": "right", "code": "X"}
+    ]
+  },
+  "events": [
+    ["send_left", "dispatch", "L", "dL"],
+    ["send_right", "dispatch", "R", "dR"],
+    ["take_left", "sample", "L", 14, "left/40", 40],
+    ["take_right", "sample", "R", 33, "right/40", 40],
+    ["receive_right", "deliver", "right", 40],
+    ["receive_left", "deliver", "left", 40],
+    ["close_right", "settle", "right"],
+    ["close_left", "settle", "left"],
+    ["right", "issue", "R", "iR"],
+    ["left", "issue", "L", "iL"],
+    ["sheet", "sheet"]
+  ]
+}
